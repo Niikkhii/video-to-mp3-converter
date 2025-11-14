@@ -94,13 +94,25 @@ The application will be available at `http://localhost:3000`
 
 ## Deployment
 
-See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
+### Vercel Deployment (Client-Side Conversion)
 
-**Quick Deploy Options:**
-- **Railway** (Recommended): Easiest deployment with full support
+The app is now configured for **Vercel** using client-side video conversion! See [VERCEL_DEPLOY.md](./VERCEL_DEPLOY.md) for detailed instructions.
+
+**Quick Deploy to Vercel:**
+1. Install Vercel CLI: `npm i -g vercel`
+2. Run: `vercel`
+3. Set environment variables in Vercel dashboard
+4. Done! 🎉
+
+**Note**: Vercel uses browser-based FFmpeg (FFmpeg.wasm) for conversion, which works around serverless limitations.
+
+### Other Deployment Options
+
+See [DEPLOYMENT.md](./DEPLOYMENT.md) for other platforms:
+
+- **Railway** (Recommended for server-side): Full FFmpeg support, no execution limits
 - **Render**: Good free tier option
 - **DigitalOcean App Platform**: Reliable and scalable
-- **Vercel**: ⚠️ Not recommended due to execution time limits
 
 ## Troubleshooting
 

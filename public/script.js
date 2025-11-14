@@ -81,6 +81,34 @@ function updateProgress(percent) {
     progressFill.style.width = percent + '%';
 }
 
+// Load FFmpeg for client-side conversion
+let ffmpegLoaded = false;
+let ffmpeg = null;
+
+async function loadFFmpeg() {
+    if (ffmpegLoaded) return;
+    
+    showProgress('Loading FFmpeg (this may take a moment)...');
+    updateProgress(5);
+    
+    try {
+        // Dynamically import FFmpeg from CDN
+        const { createFFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+        ffmpeg = createFFmpeg({ 
+            log: false, // Set to true for debugging
+            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
+            wasmPath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/'
+        });
+        
+        await ffmpeg.load();
+        ffmpegLoaded = true;
+        console.log('FFmpeg loaded successfully');
+    } catch (error) {
+        console.error('Error loading FFmpeg:', error);
+        throw new Error('Failed to load FFmpeg. Please try again or use a different browser.');
+    }
+}
+
 convertBtn.addEventListener('click', async () => {
     if (!selectedFile) {
         showError('Please select a video file first');
@@ -98,29 +126,81 @@ convertBtn.addEventListener('click', async () => {
 
     convertBtn.disabled = true;
     hideResults();
-    showProgress('Uploading video file...');
-    updateProgress(10);
-
+    
     try {
-        const formData = new FormData();
-        formData.append('video', selectedFile);
-        formData.append('audioName', cleanAudioName);
+        // Load FFmpeg if not already loaded
+        if (!ffmpegLoaded) {
+            await loadFFmpeg();
+        }
 
-        updateProgress(30);
-        showProgress('Converting video to MP3...');
-
-        const response = await fetch('/api/convert', {
+        updateProgress(10);
+        showProgress('Reading video file...');
+        
+        // Read video file
+        const videoData = await selectedFile.arrayBuffer();
+        const videoName = selectedFile.name;
+        
+        updateProgress(20);
+        showProgress('Converting video to MP3 (this may take a while)...');
+        
+        // Write video file to FFmpeg virtual file system
+        ffmpeg.FS('writeFile', videoName, new Uint8Array(videoData));
+        
+        updateProgress(40);
+        
+        // Convert to MP3
+        const outputFileName = `${cleanAudioName}.mp3`;
+        await ffmpeg.run(
+            '-i', videoName,
+            '-vn', // No video
+            '-acodec', 'libmp3lame',
+            '-ab', '192k',
+            '-ar', '44100',
+            outputFileName
+        );
+        
+        updateProgress(70);
+        showProgress('Reading converted audio...');
+        
+        // Read the converted file
+        const audioData = ffmpeg.FS('readFile', outputFileName);
+        
+        // Clean up
+        ffmpeg.FS('unlink', videoName);
+        ffmpeg.FS('unlink', outputFileName);
+        
+        updateProgress(80);
+        showProgress('Uploading to Google Drive...');
+        
+        // Convert to base64 for API
+        const audioBlob = new Blob([audioData.buffer], { type: 'audio/mpeg' });
+        const reader = new FileReader();
+        
+        const base64Audio = await new Promise((resolve, reject) => {
+            reader.onload = () => {
+                const base64 = reader.result.split(',')[1]; // Remove data:audio/mpeg;base64, prefix
+                resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(audioBlob);
+        });
+        
+        // Upload to Vercel API
+        const response = await fetch('/api/convert-v2', {
             method: 'POST',
-            body: formData
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                audioBlob: base64Audio,
+                fileName: `${cleanAudioName}.mp3`
+            })
         });
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.error || 'Conversion failed');
+            throw new Error(error.error || 'Upload failed');
         }
-
-        updateProgress(70);
-        showProgress('Uploading to Google Drive...');
 
         const result = await response.json();
         
@@ -139,6 +219,7 @@ convertBtn.addEventListener('click', async () => {
         }, 3000);
 
     } catch (error) {
+        console.error('Error:', error);
         showError(error.message || 'An error occurred during conversion');
         convertBtn.disabled = false;
     }
