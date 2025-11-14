@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: video-to-mp3-converter
+    env: node
+    buildCommand: apt-get update && apt-get install -y ffmpeg && npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+

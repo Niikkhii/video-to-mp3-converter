@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video to MP3 Converter</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <div class="card">
+            <h1>🎵 Video to MP3 Converter</h1>
+            <p class="subtitle">Upload any video file and convert it to MP3 format</p>
+            
+            <div class="upload-section">
+                <input type="file" id="videoInput" accept="video/*" hidden>
+                <label for="videoInput" class="upload-label" id="uploadLabel">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">
+                        <span class="upload-title">Click to upload video</span>
+                        <span class="upload-subtitle">or drag and drop</span>
+                    </div>
+                </label>
+                <div id="fileName" class="file-name"></div>
+            </div>
+
+            <div class="form-section" id="formSection" style="display: none;">
+                <div class="input-group">
+                    <label for="audioName">Enter preferred name for audio file:</label>
+                    <input type="text" id="audioName" placeholder="e.g., My Audio File" required>
+                    <small>Don't include .mp3 extension (it will be added automatically)</small>
+                </div>
+                <button id="convertBtn" class="btn btn-primary">Convert & Upload to Drive</button>
+            </div>
+
+            <div id="progressSection" class="progress-section" style="display: none;">
+                <div class="progress-bar">
+                    <div id="progressFill" class="progress-fill"></div>
+                </div>
+                <p id="progressText" class="progress-text">Processing...</p>
+            </div>
+
+            <div id="resultSection" class="result-section" style="display: none;">
+                <div class="success-message">
+                    <div class="success-icon">✅</div>
+                    <h2>Success!</h2>
+                    <p id="resultMessage"></p>
+                </div>
+            </div>
+
+            <div id="errorSection" class="error-section" style="display: none;">
+                <div class="error-message">
+                    <div class="error-icon">❌</div>
+                    <h2>Error</h2>
+                    <p id="errorMessage"></p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
+
