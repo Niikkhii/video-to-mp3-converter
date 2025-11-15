@@ -13,11 +13,13 @@ export default function Home() {
   const loadFFmpeg = async () => {
     if (!ffmpegRef.current) {
       // Use single-threaded ffmpeg-core served from /ffmpeg-core/ to avoid SharedArrayBuffer requirement
+      // Use absolute URLs to ensure correct loading in both dev and production
+      const baseURL = typeof window !== 'undefined' ? window.location.origin : ''
       const ffmpeg = createFFmpeg({
         log: true,
-        corePath: '/ffmpeg-core/ffmpeg-core.js',
-        wasmPath: '/ffmpeg-core/ffmpeg-core.wasm',
-        workerPath: '/ffmpeg-core/ffmpeg-core.worker.js',
+        corePath: `${baseURL}/ffmpeg-core/ffmpeg-core.js`,
+        wasmPath: `${baseURL}/ffmpeg-core/ffmpeg-core.wasm`,
+        workerPath: `${baseURL}/ffmpeg-core/ffmpeg-core.worker.js`,
       })
       ffmpeg.setProgress(({ ratio }) => setProgress(Math.round(ratio * 100)))
       setStatus('Loading FFmpeg (this runs once, may take 30-60 seconds)...')
