@@ -103,9 +103,29 @@ async function loadFFmpeg() {
             console.log('Module.default type:', typeof module.default);
             
             // Try different possible export names - newer versions export FFmpeg class
-            let FFmpegClass = module.FFmpeg;
+            // Check if module.FFmpeg exists and is a constructor/class
+            let FFmpegClass = null;
+            
+            if (module.FFmpeg) {
+                // Check if it's a class/constructor
+                if (typeof module.FFmpeg === 'function') {
+                    FFmpegClass = module.FFmpeg;
+                } else if (module.FFmpeg.default && typeof module.FFmpeg.default === 'function') {
+                    FFmpegClass = module.FFmpeg.default;
+                } else if (module.FFmpeg.FFmpeg && typeof module.FFmpeg.FFmpeg === 'function') {
+                    FFmpegClass = module.FFmpeg.FFmpeg;
+                }
+            }
+            
+            // Try module.default
             if (!FFmpegClass && module.default) {
-                FFmpegClass = (typeof module.default === 'function') ? module.default : module.default.FFmpeg;
+                if (typeof module.default === 'function') {
+                    FFmpegClass = module.default;
+                } else if (module.default.FFmpeg && typeof module.default.FFmpeg === 'function') {
+                    FFmpegClass = module.default.FFmpeg;
+                } else if (module.default.default && typeof module.default.default === 'function') {
+                    FFmpegClass = module.default.default;
+                }
             }
             
             // If we have the class, return a factory function
