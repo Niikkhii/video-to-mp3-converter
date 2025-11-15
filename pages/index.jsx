@@ -1,6 +1,14 @@
 import { useState, useRef } from 'react'
-import lamejs from 'lamejs'
 import styles from '../styles/Home.module.css'
+
+// Dynamic import for lamejs to handle CommonJS module
+let lamejs = null
+const getLamejs = async () => {
+  if (!lamejs) {
+    lamejs = await import('lamejs')
+  }
+  return lamejs.default || lamejs
+}
 
 export default function Home() {
   const [file, setFile] = useState(null)
@@ -205,7 +213,10 @@ export default function Home() {
   const encodeToMP3 = async (audioBuffer, sampleRate) => {
     setProgress(75)
     const channels = audioBuffer.numberOfChannels
-    const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, 128) // 128kbps
+    
+    // Dynamically import lamejs
+    const Lame = await getLamejs()
+    const mp3encoder = new Lame.Mp3Encoder(channels, sampleRate, 128) // 128kbps
     
     const leftChannel = audioBuffer.getChannelData(0)
     const rightChannel = channels > 1 ? audioBuffer.getChannelData(1) : leftChannel
