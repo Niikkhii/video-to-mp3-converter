@@ -116,7 +116,13 @@ After deployment, update the OAuth redirect URI in Google Cloud Console:
 ├── pages/
 │   ├── index.jsx          # Main UI component
 │   └── api/
-│       └── upload.js       # Google Drive upload API
+│       ├── upload.js       # Google Drive upload API
+│       └── health.js       # Health check endpoint
+├── public/
+│   └── ffmpeg-core/       # FFmpeg core files (single-threaded mode)
+│       ├── ffmpeg-core.js
+│       ├── ffmpeg-core.wasm
+│       └── ffmpeg-core.worker.js
 ├── styles/
 │   └── Home.module.css     # Component styles
 ├── next.config.js          # Next.js configuration
@@ -124,12 +130,39 @@ After deployment, update the OAuth redirect URI in Google Cloud Console:
 └── README.md              # This file
 ```
 
+### FFmpeg Core Files
+
+The `public/ffmpeg-core/` directory contains pre-built FFmpeg WebAssembly files that are served locally to avoid SharedArrayBuffer requirements (which need cross-origin isolation headers that break Vercel deployments).
+
+**Current Version**: Compatible with `@ffmpeg/ffmpeg@0.11.6` (uses `@ffmpeg/core@0.11.0`)
+
+**To Regenerate Core Files** (if you update `@ffmpeg/ffmpeg` version):
+
+1. Check the compatible `@ffmpeg/core` version in `node_modules/@ffmpeg/ffmpeg/package.json` (look for `"@ffmpeg/core"` in dependencies)
+
+2. Download the matching core files:
+   ```bash
+   mkdir -p public/ffmpeg-core
+   curl -L "https://unpkg.com/@ffmpeg/core@<VERSION>/dist/ffmpeg-core.js" -o public/ffmpeg-core/ffmpeg-core.js
+   curl -L "https://unpkg.com/@ffmpeg/core@<VERSION>/dist/ffmpeg-core.wasm" -o public/ffmpeg-core/ffmpeg-core.wasm
+   curl -L "https://unpkg.com/@ffmpeg/core@<VERSION>/dist/ffmpeg-core.worker.js" -o public/ffmpeg-core/ffmpeg-core.worker.js
+   ```
+
+3. Replace `<VERSION>` with the actual core version (e.g., `0.11.0`)
+
+**Why Local Files?**
+- Avoids SharedArrayBuffer requirement (no cross-origin isolation needed)
+- Works reliably on Vercel without special headers
+- Faster loading (served from same origin)
+- Single-threaded mode (sufficient for video conversion)
+
 ## Notes
 
-- **FFmpeg.wasm**: First load will download WebAssembly assets (~20MB). Subsequent loads are cached.
+- **FFmpeg.wasm**: Uses local core files from `public/ffmpeg-core/` (single-threaded mode, no SharedArrayBuffer required). First load will download ~23MB WASM file. Subsequent loads are cached.
 - **File Size**: Large videos may take time to convert in the browser. Recommended for files under 500MB.
 - **Browser Support**: Works best on modern browsers (Chrome, Firefox, Edge, Safari)
 - **Google Drive**: Make sure the OAuth app has access to the specified folder
+- **Vercel Compatibility**: Uses single-threaded FFmpeg core to avoid cross-origin isolation requirements
 
 ## Troubleshooting
 

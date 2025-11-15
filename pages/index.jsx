@@ -12,12 +12,24 @@ export default function Home() {
 
   const loadFFmpeg = async () => {
     if (!ffmpegRef.current) {
-      const ffmpeg = createFFmpeg({ log: true })
+      // Use single-threaded ffmpeg-core served from /ffmpeg-core/ to avoid SharedArrayBuffer requirement
+      const ffmpeg = createFFmpeg({
+        log: true,
+        corePath: '/ffmpeg-core/ffmpeg-core.js',
+        wasmPath: '/ffmpeg-core/ffmpeg-core.wasm',
+        workerPath: '/ffmpeg-core/ffmpeg-core.worker.js',
+      })
       ffmpeg.setProgress(({ ratio }) => setProgress(Math.round(ratio * 100)))
       setStatus('Loading FFmpeg (this runs once, may take 30-60 seconds)...')
-      await ffmpeg.load()
-      ffmpegRef.current = ffmpeg
-      setStatus('FFmpeg loaded successfully')
+      try {
+        await ffmpeg.load()
+        ffmpegRef.current = ffmpeg
+        setStatus('FFmpeg loaded successfully')
+      } catch (err) {
+        console.error('FFmpeg load error:', err)
+        setStatus('❌ Error loading FFmpeg core. Please refresh the page and try again.')
+        throw err
+      }
     }
   }
 
