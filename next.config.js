@@ -1,8 +1,6 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  api: {
-    bodyParser: false
-  }
+  // API routes handle body parsing themselves via export const config
 }
 
 module.exports = nextConfig
