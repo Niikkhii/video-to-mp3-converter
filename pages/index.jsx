@@ -25,100 +25,166 @@ export default function Home() {
       return 
     }
 
+    let videoURL = null
+    let audioContext = null
+
     try {
       setConverting(true)
-      setStatus('Extracting audio from video...')
+      setStatus('Loading video file...')
       setProgress(10)
 
-      // Create video element
+      // Create video element to extract audio
       const video = document.createElement('video')
       video.preload = 'auto'
-      video.muted = true
+      video.muted = false // Need audio, not muted
       video.playsInline = true
       video.crossOrigin = 'anonymous'
       
-      const videoURL = URL.createObjectURL(file)
+      videoURL = URL.createObjectURL(file)
       video.src = videoURL
 
-      // Wait for video metadata
+      // Wait for video to be ready
       await new Promise((resolve, reject) => {
-        video.onloadedmetadata = () => resolve()
-        video.onerror = () => reject(new Error('Failed to load video'))
-        setTimeout(() => reject(new Error('Video loading timeout')), 10000)
+        video.onloadedmetadata = () => {
+          if (video.duration && video.duration > 0) {
+            resolve()
+          } else {
+            reject(new Error('Video has no duration - may not have audio track'))
+          }
+        }
+        video.onerror = (e) => reject(new Error('Failed to load video: ' + (e.message || 'Unknown error')))
+        setTimeout(() => reject(new Error('Video loading timeout')), 15000)
       })
 
       setProgress(20)
-      setStatus('Processing audio...')
+      setStatus('Extracting audio from video...')
 
       // Create AudioContext
-      const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      audioContext = new (window.AudioContext || window.webkitAudioContext)()
       const sampleRate = audioContext.sampleRate
 
-      // Use MediaRecorder to capture audio from video
-      const stream = video.captureStream ? video.captureStream() : null
+      // Method 1: Try using video.captureStream() with MediaRecorder (more reliable)
+      let audioBuffer = null
       
-      if (!stream) {
-        // Fallback: decode audio directly
-        const response = await fetch(videoURL)
-        const arrayBuffer = await response.arrayBuffer()
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
-        
-        // Convert to MP3
-        setProgress(40)
-        setStatus('Encoding to MP3...')
-        const mp3Blob = await encodeToMP3(audioBuffer, sampleRate)
-        
-        await uploadToDrive(mp3Blob, outputName)
-        return
-      }
-
-      // Use MediaRecorder approach
-      const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
-
-      const chunks = []
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) chunks.push(e.data)
-      }
-
-      await new Promise((resolve, reject) => {
-        mediaRecorder.onstop = resolve
-        mediaRecorder.onerror = reject
-        
-        mediaRecorder.start()
-        video.play()
-        
-        video.onended = () => {
-          mediaRecorder.stop()
-          video.pause()
-        }
-        
-        // Fallback timeout
-        setTimeout(() => {
-          if (mediaRecorder.state !== 'inactive') {
-            mediaRecorder.stop()
-            video.pause()
+      if (video.captureStream) {
+        try {
+          const stream = video.captureStream()
+          
+          // Try different MIME types
+          const mimeTypes = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/ogg;codecs=opus',
+            'audio/mp4',
+            'audio/mpeg'
+          ]
+          
+          let mediaRecorder = null
+          let selectedMimeType = null
+          
+          // Find supported MIME type
+          for (const mimeType of mimeTypes) {
+            if (MediaRecorder.isTypeSupported(mimeType)) {
+              selectedMimeType = mimeType
+              break
+            }
           }
-        }, (video.duration || 60) * 1000 + 2000)
-      })
+          
+          if (!selectedMimeType) {
+            throw new Error('No supported audio MIME type found')
+          }
+
+          mediaRecorder = new MediaRecorder(stream, {
+            mimeType: selectedMimeType
+          })
+
+          const chunks = []
+          mediaRecorder.ondataavailable = (e) => {
+            if (e.data && e.data.size > 0) {
+              chunks.push(e.data)
+            }
+          }
+
+          await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              if (mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop()
+              }
+              reject(new Error('MediaRecorder timeout'))
+            }, (video.duration || 60) * 1000 + 5000)
+
+            mediaRecorder.onstop = () => {
+              clearTimeout(timeout)
+              resolve()
+            }
+            mediaRecorder.onerror = (e) => {
+              clearTimeout(timeout)
+              reject(new Error('MediaRecorder error: ' + (e.error?.message || 'Unknown')))
+            }
+            
+            try {
+              mediaRecorder.start(100) // Collect data every 100ms
+              video.play().catch(reject)
+              
+              video.onended = () => {
+                if (mediaRecorder.state !== 'inactive') {
+                  mediaRecorder.stop()
+                }
+              }
+            } catch (err) {
+              clearTimeout(timeout)
+              reject(err)
+            }
+          })
+
+          setProgress(50)
+          setStatus('Decoding audio...')
+
+          // Decode the recorded audio
+          const audioBlob = new Blob(chunks, { type: selectedMimeType })
+          const audioArrayBuffer = await audioBlob.arrayBuffer()
+          audioBuffer = await audioContext.decodeAudioData(audioArrayBuffer)
+          
+          // Cleanup stream
+          stream.getTracks().forEach(track => track.stop())
+          
+        } catch (mediaRecorderError) {
+          console.warn('MediaRecorder approach failed, trying alternative:', mediaRecorderError)
+          // Fall through to alternative method
+        }
+      }
+
+      // Method 2: Alternative - Use Web Audio API to decode directly from video file
+      if (!audioBuffer) {
+        setProgress(30)
+        setStatus('Using alternative audio extraction method...')
+        
+        try {
+          // Fetch the video file
+          const response = await fetch(videoURL)
+          const arrayBuffer = await response.arrayBuffer()
+          
+          // Try to decode as audio (works for some formats)
+          audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        } catch (decodeError) {
+          // If direct decode fails, we need to use the video element approach
+          throw new Error('Unable to extract audio from video. The video file may not contain an audio track, or the format is not supported. Error: ' + decodeError.message)
+        }
+      }
+
+      if (!audioBuffer) {
+        throw new Error('Failed to extract audio from video')
+      }
 
       setProgress(60)
-      setStatus('Converting to MP3...')
-
-      // Decode the recorded audio
-      const audioBlob = new Blob(chunks, { type: 'audio/webm' })
-      const audioArrayBuffer = await audioBlob.arrayBuffer()
-      const audioBuffer = await audioContext.decodeAudioData(audioArrayBuffer)
+      setStatus('Encoding to MP3...')
 
       // Convert to MP3
-      setProgress(70)
       const mp3Blob = await encodeToMP3(audioBuffer, sampleRate)
 
       // Cleanup
-      URL.revokeObjectURL(videoURL)
-      audioContext.close()
-      stream.getTracks().forEach(track => track.stop())
+      if (videoURL) URL.revokeObjectURL(videoURL)
+      if (audioContext) audioContext.close()
 
       // Upload
       await uploadToDrive(mp3Blob, outputName)
@@ -126,6 +192,10 @@ export default function Home() {
     } catch (err) {
       console.error('Conversion error:', err)
       setStatus('❌ Error: ' + (err.message || err))
+      
+      // Cleanup on error
+      if (videoURL) URL.revokeObjectURL(videoURL)
+      if (audioContext) audioContext.close()
     } finally {
       setConverting(false)
       setProgress(0)
