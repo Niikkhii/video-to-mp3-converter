@@ -92,20 +92,54 @@ async function loadFFmpeg() {
     updateProgress(5);
     
     try {
-        // Wait for FFmpeg to be available from the script tag
-        if (typeof FFmpeg === 'undefined') {
-            // If not loaded yet, wait a bit
+        // Wait for FFmpeg to be available - check multiple possible global names
+        let FFmpegLib = window.FFmpeg || window.FFmpegWASM || FFmpeg;
+        
+        // Wait up to 10 seconds for the script to load
+        let attempts = 0;
+        while (typeof FFmpegLib === 'undefined' && attempts < 100) {
             await new Promise(resolve => setTimeout(resolve, 100));
-            if (typeof FFmpeg === 'undefined') {
-                throw new Error('FFmpeg library not loaded. Please refresh the page.');
-            }
+            FFmpegLib = window.FFmpeg || window.FFmpegWASM || FFmpeg;
+            attempts++;
         }
         
-        // Use FFmpeg from global scope (loaded via script tag)
-        const { createFFmpeg } = FFmpeg;
+        if (typeof FFmpegLib === 'undefined') {
+            // Try loading it manually
+            console.log('FFmpeg not found, attempting to load...');
+            await new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js';
+                script.onload = () => {
+                    FFmpegLib = window.FFmpeg || window.FFmpegWASM || FFmpeg;
+                    if (typeof FFmpegLib !== 'undefined') {
+                        resolve();
+                    } else {
+                        reject(new Error('FFmpeg loaded but not accessible'));
+                    }
+                };
+                script.onerror = () => reject(new Error('Failed to load FFmpeg script'));
+                document.head.appendChild(script);
+            });
+        }
+        
+        // Get createFFmpeg function - try different ways it might be exposed
+        let createFFmpeg;
+        if (FFmpegLib && FFmpegLib.createFFmpeg) {
+            createFFmpeg = FFmpegLib.createFFmpeg;
+        } else if (FFmpegLib && typeof FFmpegLib === 'function') {
+            createFFmpeg = FFmpegLib;
+        } else if (typeof createFFmpeg === 'undefined') {
+            // Last resort: try importing from CDN
+            const module = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+            createFFmpeg = module.createFFmpeg;
+        }
+        
+        if (!createFFmpeg) {
+            throw new Error('createFFmpeg function not found');
+        }
         
         ffmpeg = createFFmpeg({ 
-            log: false, // Set to true for debugging
+            log: false,
             corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
             wasmPath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/'
         });
@@ -118,7 +152,7 @@ async function loadFFmpeg() {
         console.log('FFmpeg loaded successfully');
     } catch (error) {
         console.error('Error loading FFmpeg:', error);
-        throw new Error('Failed to load FFmpeg: ' + error.message);
+        throw new Error('Failed to load FFmpeg: ' + error.message + '. Please try refreshing the page.');
     }
 }
 
