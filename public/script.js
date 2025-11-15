@@ -99,41 +99,55 @@ async function loadFFmpeg() {
             console.log('🔄 Method 1: Trying ESM import from unpkg...');
             const module = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
             console.log('Module imported:', Object.keys(module));
+            console.log('Module.FFmpeg type:', typeof module.FFmpeg);
+            console.log('Module.default type:', typeof module.default);
             
             // Try different possible export names - newer versions export FFmpeg class
-            const FFmpegClass = module.FFmpeg || module.default?.FFmpeg || module.default;
-            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
+            let FFmpegClass = module.FFmpeg;
+            if (!FFmpegClass && module.default) {
+                FFmpegClass = (typeof module.default === 'function') ? module.default : module.default.FFmpeg;
+            }
             
             // If we have the class, return a factory function
             if (FFmpegClass && typeof FFmpegClass === 'function') {
+                console.log('✅ Found FFmpeg class, creating factory function');
                 return (options) => new FFmpegClass(options);
             }
             
-            // Fallback to createFFmpeg if available
+            // Fallback to createFFmpeg if available (older versions)
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
             if (typeof createFFmpeg === 'function') {
+                console.log('✅ Found createFFmpeg function');
                 return createFFmpeg;
             }
             
-            throw new Error('FFmpeg class or createFFmpeg not found in module exports');
+            console.error('Available exports:', Object.keys(module));
+            throw new Error('FFmpeg class or createFFmpeg not found. Available: ' + Object.keys(module).join(', '));
         },
         
         // Method 2: ESM import from jsdelivr
         async () => {
             console.log('🔄 Method 2: Trying ESM import from jsdelivr...');
             const module = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+            console.log('Module imported:', Object.keys(module));
             
-            const FFmpegClass = module.FFmpeg || module.default?.FFmpeg || module.default;
-            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
+            let FFmpegClass = module.FFmpeg;
+            if (!FFmpegClass && module.default) {
+                FFmpegClass = (typeof module.default === 'function') ? module.default : module.default.FFmpeg;
+            }
             
             if (FFmpegClass && typeof FFmpegClass === 'function') {
+                console.log('✅ Found FFmpeg class, creating factory function');
                 return (options) => new FFmpegClass(options);
             }
             
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
             if (typeof createFFmpeg === 'function') {
+                console.log('✅ Found createFFmpeg function');
                 return createFFmpeg;
             }
             
-            throw new Error('FFmpeg class or createFFmpeg not found in module exports');
+            throw new Error('FFmpeg class or createFFmpeg not found. Available: ' + Object.keys(module).join(', '));
         },
         
         // Method 3: Try older version with createFFmpeg
