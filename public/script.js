@@ -92,20 +92,33 @@ async function loadFFmpeg() {
     updateProgress(5);
     
     try {
-        // Dynamically import FFmpeg from CDN
-        const { createFFmpeg } = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+        // Wait for FFmpeg to be available from the script tag
+        if (typeof FFmpeg === 'undefined') {
+            // If not loaded yet, wait a bit
+            await new Promise(resolve => setTimeout(resolve, 100));
+            if (typeof FFmpeg === 'undefined') {
+                throw new Error('FFmpeg library not loaded. Please refresh the page.');
+            }
+        }
+        
+        // Use FFmpeg from global scope (loaded via script tag)
+        const { createFFmpeg } = FFmpeg;
+        
         ffmpeg = createFFmpeg({ 
             log: false, // Set to true for debugging
-            corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
-            wasmPath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/'
+            corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
+            wasmPath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/'
         });
+        
+        updateProgress(15);
+        showProgress('Loading FFmpeg core (this may take 30-60 seconds)...');
         
         await ffmpeg.load();
         ffmpegLoaded = true;
         console.log('FFmpeg loaded successfully');
     } catch (error) {
         console.error('Error loading FFmpeg:', error);
-        throw new Error('Failed to load FFmpeg. Please try again or use a different browser.');
+        throw new Error('Failed to load FFmpeg: ' + error.message);
     }
 }
 
