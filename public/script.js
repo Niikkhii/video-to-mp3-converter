@@ -94,43 +94,77 @@ async function loadFFmpeg() {
     updateProgress(5);
     
     const methods = [
-        // Method 1: ESM import from unpkg
+        // Method 1: ESM import from unpkg (newer version uses FFmpeg class)
         async () => {
             console.log('🔄 Method 1: Trying ESM import from unpkg...');
             const module = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
             console.log('Module imported:', Object.keys(module));
             
-            // Try different possible export names
-            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg || module.default;
+            // Try different possible export names - newer versions export FFmpeg class
+            const FFmpegClass = module.FFmpeg || module.default?.FFmpeg || module.default;
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
             
-            if (typeof createFFmpeg !== 'function') {
-                throw new Error('createFFmpeg not found in module exports');
+            // If we have the class, return a factory function
+            if (FFmpegClass && typeof FFmpegClass === 'function') {
+                return (options) => new FFmpegClass(options);
             }
             
-            return createFFmpeg;
+            // Fallback to createFFmpeg if available
+            if (typeof createFFmpeg === 'function') {
+                return createFFmpeg;
+            }
+            
+            throw new Error('FFmpeg class or createFFmpeg not found in module exports');
         },
         
         // Method 2: ESM import from jsdelivr
         async () => {
             console.log('🔄 Method 2: Trying ESM import from jsdelivr...');
             const module = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
-            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg || module.default;
             
-            if (typeof createFFmpeg !== 'function') {
-                throw new Error('createFFmpeg not found in module exports');
+            const FFmpegClass = module.FFmpeg || module.default?.FFmpeg || module.default;
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg;
+            
+            if (FFmpegClass && typeof FFmpegClass === 'function') {
+                return (options) => new FFmpegClass(options);
             }
             
-            return createFFmpeg;
+            if (typeof createFFmpeg === 'function') {
+                return createFFmpeg;
+            }
+            
+            throw new Error('FFmpeg class or createFFmpeg not found in module exports');
         },
         
-        // Method 3: UMD script tag approach
+        // Method 3: Try older version with createFFmpeg
         async () => {
-            console.log('🔄 Method 3: Trying UMD script tag...');
+            console.log('🔄 Method 3: Trying older version with createFFmpeg...');
+            const module = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/esm/index.js');
+            
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg || module.default;
+            
+            if (typeof createFFmpeg === 'function') {
+                return createFFmpeg;
+            }
+            
+            throw new Error('createFFmpeg not found in older version');
+        },
+        
+        // Method 4: UMD script tag approach
+        async () => {
+            console.log('🔄 Method 4: Trying UMD script tag...');
             return new Promise((resolve, reject) => {
                 // Check if already loaded
-                if (window.FFmpeg && window.FFmpeg.createFFmpeg) {
-                    resolve(window.FFmpeg.createFFmpeg);
-                    return;
+                if (window.FFmpeg) {
+                    // Check if it's a class or has createFFmpeg
+                    if (typeof window.FFmpeg === 'function') {
+                        resolve((options) => new window.FFmpeg(options));
+                        return;
+                    }
+                    if (window.FFmpeg.createFFmpeg && typeof window.FFmpeg.createFFmpeg === 'function') {
+                        resolve(window.FFmpeg.createFFmpeg);
+                        return;
+                    }
                 }
                 
                 const script = document.createElement('script');
@@ -143,14 +177,19 @@ async function loadFFmpeg() {
                 
                 script.onload = () => {
                     clearTimeout(timeout);
-                    const createFFmpeg = window.FFmpeg?.createFFmpeg || 
-                                        window.FFmpegWASM?.createFFmpeg ||
-                                        (typeof window.FFmpeg === 'function' ? window.FFmpeg : null);
                     
-                    if (typeof createFFmpeg === 'function') {
-                        resolve(createFFmpeg);
+                    // Try different ways to access FFmpeg
+                    const FFmpegGlobal = window.FFmpeg || window.FFmpegWASM;
+                    
+                    if (typeof FFmpegGlobal === 'function') {
+                        // It's a class
+                        resolve((options) => new FFmpegGlobal(options));
+                    } else if (FFmpegGlobal && typeof FFmpegGlobal.createFFmpeg === 'function') {
+                        resolve(FFmpegGlobal.createFFmpeg);
+                    } else if (FFmpegGlobal && typeof FFmpegGlobal.FFmpeg === 'function') {
+                        resolve((options) => new FFmpegGlobal.FFmpeg(options));
                     } else {
-                        reject(new Error('FFmpeg loaded but createFFmpeg not accessible'));
+                        reject(new Error('FFmpeg loaded but not accessible in expected format'));
                     }
                 };
                 
