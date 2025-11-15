@@ -251,6 +251,16 @@ export default function Home() {
     
     // Dynamically import lamejs
     const Lame = await getLamejs()
+    
+    // Debug: log what we got
+    console.log('Lame module:', Lame)
+    console.log('Has Mp3Encoder:', !!Lame.Mp3Encoder)
+    console.log('Lame keys:', Object.keys(Lame))
+    
+    if (!Lame.Mp3Encoder) {
+      throw new Error('Mp3Encoder not found in lamejs module. Available: ' + Object.keys(Lame).join(', '))
+    }
+    
     const mp3encoder = new Lame.Mp3Encoder(channels, sampleRate, 128) // 128kbps
     
     const leftChannel = audioBuffer.getChannelData(0)
