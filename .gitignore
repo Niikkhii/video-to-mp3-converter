@@ -1,11 +1,11 @@
 node_modules/
-credentials.json
-token.json
+.next/
+.env.local
+.env*.local
 *.mp3
 *.mp4
 *.avi
 *.mov
 *.mkv
-.env
 .DS_Store
-
+*.log
