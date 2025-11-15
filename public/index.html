@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Video to MP3 Converter</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎵</text></svg>">
     <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -58,26 +59,7 @@
         </div>
     </div>
 
-    <!-- Load FFmpeg from CDN with proper loading -->
-    <script>
-        // Load FFmpeg script dynamically and wait for it
-        (function() {
-            const script = document.createElement('script');
-            script.src = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js';
-            script.onload = function() {
-                console.log('FFmpeg script loaded');
-                // Make sure FFmpeg is available globally
-                if (typeof window.FFmpeg === 'undefined' && typeof FFmpeg !== 'undefined') {
-                    window.FFmpeg = FFmpeg;
-                }
-            };
-            script.onerror = function() {
-                console.error('Failed to load FFmpeg script');
-            };
-            document.head.appendChild(script);
-        })();
-    </script>
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>
 
