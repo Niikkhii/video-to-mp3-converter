@@ -168,7 +168,13 @@ async function loadFFmpeg() {
     
     for (let i = 0; i < methods.length; i++) {
         try {
-            console.log(`Attempting method ${i + 1}...`);
+            console.log(`Attempting method ${i + 1} of ${methods.length}...`);
+            
+            // Validate method exists
+            if (!methods[i] || typeof methods[i] !== 'function') {
+                throw new Error(`Method ${i + 1} is not a valid function`);
+            }
+            
             const createFFmpeg = await methods[i]();
             
             if (typeof createFFmpeg !== 'function') {
