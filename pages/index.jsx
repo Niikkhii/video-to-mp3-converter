@@ -14,10 +14,10 @@ export default function Home() {
     if (!ffmpegRef.current) {
       const ffmpeg = createFFmpeg({ log: true })
       ffmpeg.setProgress(({ ratio }) => setProgress(Math.round(ratio * 100)))
-      setStatus('Loading FFmpeg (this runs once)')
+      setStatus('Loading FFmpeg (this runs once, may take 30-60 seconds)...')
       await ffmpeg.load()
       ffmpegRef.current = ffmpeg
-      setStatus('FFmpeg loaded')
+      setStatus('FFmpeg loaded successfully')
     }
   }
 
@@ -70,16 +70,18 @@ export default function Home() {
       const resJson = await res.json()
 
       if (res.ok) {
-        setStatus('✅ Uploaded successfully! File ID: ' + resJson.id)
+        setStatus(`✅ Uploaded successfully! File ID: ${resJson.id}. Link: ${resJson.link || 'N/A'}`)
+        console.log('Upload success:', resJson)
         // Reset form
         setTimeout(() => {
           setFile(null)
           setOutputName('')
           setStatus('')
           setProgress(0)
-        }, 3000)
+        }, 5000)
       } else {
         setStatus('❌ Upload failed: ' + (resJson.error || JSON.stringify(resJson)))
+        console.error('Upload failed:', resJson)
       }
 
     } catch (err) {
