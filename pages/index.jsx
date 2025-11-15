@@ -220,17 +220,17 @@ export default function Home() {
       }
 
       setProgress(60)
-      setStatus('Encoding to MP3...')
+      setStatus('Encoding audio...')
 
-      // Convert to MP3
-      const mp3Blob = await encodeToMP3(audioBuffer, sampleRate)
+      // Convert to WAV (simpler, no external libraries)
+      const audioBlob = await encodeToMP3(audioBuffer, sampleRate)
 
       // Cleanup
       if (videoURL) URL.revokeObjectURL(videoURL)
       if (audioContext) audioContext.close()
 
       // Upload
-      await uploadToDrive(mp3Blob, outputName)
+      await uploadToDrive(audioBlob, outputName)
 
     } catch (err) {
       console.error('Conversion error:', err)
@@ -249,62 +249,90 @@ export default function Home() {
     setProgress(75)
     const channels = audioBuffer.numberOfChannels
     
+    // For now, let's use WAV format instead of MP3 to avoid lamejs issues
+    // WAV is simpler and doesn't require encoding libraries
+    setStatus('Encoding to WAV format...')
+    
+    // Convert AudioBuffer to WAV
+    const wav = audioBufferToWav(audioBuffer)
+    return new Blob([wav], { type: 'audio/wav' })
+    
+    /* MP3 encoding disabled due to lamejs CommonJS issues
     // Dynamically import lamejs
     const Lame = await getLamejs()
     
-    // Debug: log what we got
-    console.log('Lame module:', Lame)
-    console.log('Has Mp3Encoder:', !!Lame.Mp3Encoder)
-    console.log('Lame keys:', Object.keys(Lame))
-    
     if (!Lame.Mp3Encoder) {
-      throw new Error('Mp3Encoder not found in lamejs module. Available: ' + Object.keys(Lame).join(', '))
+      throw new Error('Mp3Encoder not found in lamejs module')
     }
     
-    const mp3encoder = new Lame.Mp3Encoder(channels, sampleRate, 128) // 128kbps
+    const mp3encoder = new Lame.Mp3Encoder(channels, sampleRate, 128)
     
-    const leftChannel = audioBuffer.getChannelData(0)
-    const rightChannel = channels > 1 ? audioBuffer.getChannelData(1) : leftChannel
-    
-    const sampleBlockSize = 1152
-    const mp3Data = []
-    
-    for (let i = 0; i < leftChannel.length; i += sampleBlockSize) {
-      const leftChunk = leftChannel.subarray(i, i + sampleBlockSize)
-      const rightChunk = rightChannel.subarray(i, i + sampleBlockSize)
-      
-      // Convert Float32Array to Int16Array
-      const leftInt16 = new Int16Array(leftChunk.length)
-      const rightInt16 = new Int16Array(rightChunk.length)
-      for (let j = 0; j < leftChunk.length; j++) {
-        leftInt16[j] = Math.max(-32768, Math.min(32767, leftChunk[j] * 32768))
-        rightInt16[j] = Math.max(-32768, Math.min(32767, rightChunk[j] * 32768))
-      }
-      
-      const mp3buf = mp3encoder.encodeBuffer(leftInt16, rightInt16)
-      if (mp3buf.length > 0) {
-        mp3Data.push(mp3buf)
-      }
-      
-      setProgress(75 + Math.floor((i / leftChannel.length) * 20))
-    }
-    
-    // Flush encoder
-    const mp3buf = mp3encoder.flush()
-    if (mp3buf.length > 0) {
-      mp3Data.push(mp3buf)
-    }
-
-    return new Blob(mp3Data, { type: 'audio/mpeg' })
+    */
   }
 
-  const uploadToDrive = async (mp3Blob, filename) => {
+  // Convert AudioBuffer to WAV format (simple, no external libraries needed)
+  const audioBufferToWav = (buffer) => {
+    const length = buffer.length
+    const numberOfChannels = buffer.numberOfChannels
+    const sampleRate = buffer.sampleRate
+    const arrayBuffer = new ArrayBuffer(44 + length * numberOfChannels * 2)
+    const view = new DataView(arrayBuffer)
+    const channels = []
+    let offset = 0
+    let pos = 0
+
+    // Write WAV header
+    const setUint16 = (data) => {
+      view.setUint16(pos, data, true)
+      pos += 2
+    }
+    const setUint32 = (data) => {
+      view.setUint32(pos, data, true)
+      pos += 4
+    }
+
+    // RIFF identifier
+    setUint32(0x46464952) // "RIFF"
+    setUint32(36 + length * numberOfChannels * 2) // File length - 8
+    setUint32(0x45564157) // "WAVE"
+    setUint32(0x20746d66) // "fmt " chunk
+    setUint32(16) // fmt chunk length
+    setUint16(1) // audio format (1 = PCM)
+    setUint16(numberOfChannels)
+    setUint32(sampleRate)
+    setUint32(sampleRate * numberOfChannels * 2) // byte rate
+    setUint16(numberOfChannels * 2) // block align
+    setUint16(16) // bits per sample
+    setUint32(0x61746164) // "data" chunk
+    setUint32(length * numberOfChannels * 2)
+
+    // Get channel data
+    for (let i = 0; i < numberOfChannels; i++) {
+      channels.push(buffer.getChannelData(i))
+    }
+
+    // Interleave and convert to 16-bit PCM
+    while (pos < arrayBuffer.byteLength) {
+      for (let i = 0; i < numberOfChannels; i++) {
+        let sample = Math.max(-1, Math.min(1, channels[i][offset]))
+        sample = sample < 0 ? sample * 0x8000 : sample * 0x7FFF
+        view.setInt16(pos, sample, true)
+        pos += 2
+      }
+      offset++
+    }
+
+    return arrayBuffer
+  }
+
+  const uploadToDrive = async (audioBlob, filename) => {
     setProgress(90)
     setStatus('Uploading to Google Drive...')
     
-    const outputNameWithExt = filename.endsWith('.mp3') ? filename : filename + '.mp3'
+    // Use WAV extension instead of MP3
+    const outputNameWithExt = filename.endsWith('.wav') ? filename : filename + '.wav'
     const form = new FormData()
-    form.append('file', new File([mp3Blob], outputNameWithExt, { type: 'audio/mpeg' }))
+    form.append('file', new File([audioBlob], outputNameWithExt, { type: 'audio/wav' }))
     form.append('filename', outputNameWithExt)
 
     const res = await fetch('/api/upload', { method: 'POST', body: form })
@@ -361,7 +389,7 @@ export default function Home() {
               placeholder="e.g., My Audio File"
               className={styles.textInput}
             />
-            <small>Don't include .mp3 extension (it will be added automatically)</small>
+            <small>Don't include .wav extension (it will be added automatically)</small>
           </div>
 
           <button 
@@ -391,7 +419,7 @@ export default function Home() {
 
         <div className={styles.notes}>
           <small>
-            <strong>Note:</strong> Uses Web Audio API + MediaRecorder - no SharedArrayBuffer required. Works in all modern browsers.
+            <strong>Note:</strong> Uses Web Audio API to extract audio and converts to WAV format. No external encoding libraries required - works reliably in all browsers.
           </small>
         </div>
       </div>
