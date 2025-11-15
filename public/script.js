@@ -84,45 +84,166 @@ function updateProgress(percent) {
 // Load FFmpeg for client-side conversion
 let ffmpegLoaded = false;
 let ffmpeg = null;
+let loadAttempts = 0;
+const MAX_LOAD_ATTEMPTS = 3;
 
 async function loadFFmpeg() {
-    if (ffmpegLoaded) return;
+    if (ffmpegLoaded && ffmpeg) return;
     
     showProgress('Loading FFmpeg (this may take a moment)...');
     updateProgress(5);
     
-    try {
-        // Use ESM import directly - this is the most reliable method
-        console.log('Importing FFmpeg from CDN...');
-        const { createFFmpeg, fetchFile } = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+    const methods = [
+        // Method 1: ESM import from unpkg
+        async () => {
+            console.log('🔄 Method 1: Trying ESM import from unpkg...');
+            const module = await import('https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+            console.log('Module imported:', Object.keys(module));
+            
+            // Try different possible export names
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg || module.default;
+            
+            if (typeof createFFmpeg !== 'function') {
+                throw new Error('createFFmpeg not found in module exports');
+            }
+            
+            return createFFmpeg;
+        },
         
-        console.log('Creating FFmpeg instance...');
-        ffmpeg = createFFmpeg({ 
-            log: true, // Enable logging to see what's happening
-            corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
-            wasmPath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/'
-        });
+        // Method 2: ESM import from jsdelivr
+        async () => {
+            console.log('🔄 Method 2: Trying ESM import from jsdelivr...');
+            const module = await import('https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/esm/index.js');
+            const createFFmpeg = module.createFFmpeg || module.default?.createFFmpeg || module.default;
+            
+            if (typeof createFFmpeg !== 'function') {
+                throw new Error('createFFmpeg not found in module exports');
+            }
+            
+            return createFFmpeg;
+        },
         
-        updateProgress(15);
-        showProgress('Loading FFmpeg core (this may take 30-60 seconds, please wait)...');
-        console.log('Loading FFmpeg core...');
-        
-        await ffmpeg.load();
-        ffmpegLoaded = true;
-        console.log('✅ FFmpeg loaded successfully!');
-        updateProgress(30);
-    } catch (error) {
-        console.error('❌ Error loading FFmpeg:', error);
-        console.error('Error details:', {
-            message: error.message,
-            stack: error.stack,
-            name: error.name
-        });
-        throw new Error('Failed to load FFmpeg: ' + error.message + '. Please check your internet connection and try again.');
+        // Method 3: UMD script tag approach
+        async () => {
+            console.log('🔄 Method 3: Trying UMD script tag...');
+            return new Promise((resolve, reject) => {
+                // Check if already loaded
+                if (window.FFmpeg && window.FFmpeg.createFFmpeg) {
+                    resolve(window.FFmpeg.createFFmpeg);
+                    return;
+                }
+                
+                const script = document.createElement('script');
+                script.src = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js';
+                script.type = 'text/javascript';
+                
+                const timeout = setTimeout(() => {
+                    reject(new Error('Script load timeout'));
+                }, 30000);
+                
+                script.onload = () => {
+                    clearTimeout(timeout);
+                    const createFFmpeg = window.FFmpeg?.createFFmpeg || 
+                                        window.FFmpegWASM?.createFFmpeg ||
+                                        (typeof window.FFmpeg === 'function' ? window.FFmpeg : null);
+                    
+                    if (typeof createFFmpeg === 'function') {
+                        resolve(createFFmpeg);
+                    } else {
+                        reject(new Error('FFmpeg loaded but createFFmpeg not accessible'));
+                    }
+                };
+                
+                script.onerror = () => {
+                    clearTimeout(timeout);
+                    reject(new Error('Failed to load FFmpeg script'));
+                };
+                
+                document.head.appendChild(script);
+            });
+        }
+    ];
+    
+    let lastError = null;
+    
+    for (let i = 0; i < methods.length; i++) {
+        try {
+            console.log(`Attempting method ${i + 1}...`);
+            const createFFmpeg = await methods[i]();
+            
+            if (typeof createFFmpeg !== 'function') {
+                throw new Error('createFFmpeg is not a function');
+            }
+            
+            console.log('✅ createFFmpeg function obtained, creating instance...');
+            updateProgress(10);
+            
+            // Create FFmpeg instance with error handling
+            try {
+                ffmpeg = createFFmpeg({ 
+                    log: false,
+                    corePath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
+                    wasmPath: 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/'
+                });
+                
+                if (!ffmpeg) {
+                    throw new Error('FFmpeg instance creation returned null/undefined');
+                }
+                
+                updateProgress(15);
+                showProgress('Loading FFmpeg core (this may take 30-60 seconds, please wait)...');
+                console.log('Loading FFmpeg core...');
+                
+                // Add timeout for loading
+                const loadPromise = ffmpeg.load();
+                const timeoutPromise = new Promise((_, reject) => 
+                    setTimeout(() => reject(new Error('FFmpeg load timeout (120s)')), 120000)
+                );
+                
+                await Promise.race([loadPromise, timeoutPromise]);
+                
+                // Verify FFmpeg is properly loaded
+                if (!ffmpeg.FS || typeof ffmpeg.FS !== 'function') {
+                    throw new Error('FFmpeg loaded but FS not available');
+                }
+                
+                if (!ffmpeg.run || typeof ffmpeg.run !== 'function') {
+                    throw new Error('FFmpeg loaded but run not available');
+                }
+                
+                ffmpegLoaded = true;
+                console.log('✅ FFmpeg loaded successfully!');
+                updateProgress(30);
+                return; // Success!
+                
+            } catch (instanceError) {
+                console.error(`❌ Error creating/loading FFmpeg instance:`, instanceError);
+                lastError = instanceError;
+                // Continue to next method
+                continue;
+            }
+            
+        } catch (methodError) {
+            console.error(`❌ Method ${i + 1} failed:`, methodError);
+            lastError = methodError;
+            // Try next method
+            continue;
+        }
     }
+    
+    // All methods failed
+    const errorMessage = lastError ? lastError.message : 'Unknown error';
+    console.error('❌ All FFmpeg loading methods failed. Last error:', errorMessage);
+    
+    throw new Error(
+        `Failed to load FFmpeg after trying ${methods.length} methods. ` +
+        `Last error: ${errorMessage}. ` +
+        `Please check your internet connection, try a different browser, or refresh the page.`
+    );
 }
 
 convertBtn.addEventListener('click', async () => {
+    // Input validation
     if (!selectedFile) {
         showError('Please select a video file first');
         return;
@@ -134,93 +255,233 @@ convertBtn.addEventListener('click', async () => {
         return;
     }
 
+    // Validate file size (500MB limit)
+    const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB
+    if (selectedFile.size > MAX_FILE_SIZE) {
+        showError(`File is too large (${(selectedFile.size / 1024 / 1024).toFixed(2)}MB). Maximum size is 500MB.`);
+        return;
+    }
+
+    // Validate file type
+    if (!selectedFile.type.startsWith('video/') && !selectedFile.name.match(/\.(mp4|avi|mov|mkv|webm|flv|wmv|m4v)$/i)) {
+        showError('Please select a valid video file');
+        return;
+    }
+
     // Clean the audio name (remove .mp3 if user added it)
-    const cleanAudioName = audioName.replace(/\.mp3$/i, '');
+    const cleanAudioName = audioName.replace(/\.mp3$/i, '').replace(/[<>:"/\\|?*]/g, '_'); // Remove invalid filename characters
 
     convertBtn.disabled = true;
     hideResults();
     
+    let videoName = null;
+    let outputFileName = null;
+    
     try {
-        // Load FFmpeg if not already loaded
-        if (!ffmpegLoaded) {
-            await loadFFmpeg();
+        // Step 1: Load FFmpeg if not already loaded
+        if (!ffmpegLoaded || !ffmpeg) {
+            try {
+                await loadFFmpeg();
+            } catch (loadError) {
+                throw new Error(`Failed to load FFmpeg: ${loadError.message}`);
+            }
         }
 
+        // Step 2: Read video file
         updateProgress(10);
         showProgress('Reading video file...');
         
-        // Read video file
-        const videoData = await selectedFile.arrayBuffer();
-        const videoName = selectedFile.name;
+        let videoData;
+        try {
+            videoData = await selectedFile.arrayBuffer();
+            if (!videoData || videoData.byteLength === 0) {
+                throw new Error('Video file is empty or could not be read');
+            }
+        } catch (readError) {
+            throw new Error(`Failed to read video file: ${readError.message}`);
+        }
         
+        videoName = selectedFile.name.replace(/[<>:"/\\|?*]/g, '_'); // Sanitize filename
+        
+        // Step 3: Write video to FFmpeg virtual file system
         updateProgress(20);
-        showProgress('Converting video to MP3 (this may take a while)...');
+        showProgress('Preparing video for conversion...');
         
-        // Write video file to FFmpeg virtual file system
-        ffmpeg.FS('writeFile', videoName, new Uint8Array(videoData));
+        try {
+            ffmpeg.FS('writeFile', videoName, new Uint8Array(videoData));
+        } catch (writeError) {
+            throw new Error(`Failed to write video to FFmpeg: ${writeError.message}. File may be too large.`);
+        }
         
-        updateProgress(40);
+        // Step 4: Convert to MP3
+        updateProgress(30);
+        showProgress('Converting video to MP3 (this may take a while, please wait)...');
         
-        // Convert to MP3
-        const outputFileName = `${cleanAudioName}.mp3`;
-        await ffmpeg.run(
-            '-i', videoName,
-            '-vn', // No video
-            '-acodec', 'libmp3lame',
-            '-ab', '192k',
-            '-ar', '44100',
-            outputFileName
-        );
+        outputFileName = `${cleanAudioName}.mp3`;
         
+        try {
+            // Add timeout for conversion (10 minutes max)
+            const conversionPromise = ffmpeg.run(
+                '-i', videoName,
+                '-vn', // No video
+                '-acodec', 'libmp3lame',
+                '-ab', '192k',
+                '-ar', '44100',
+                '-y', // Overwrite output file
+                outputFileName
+            );
+            
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Conversion timeout (10 minutes). File may be too large or complex.')), 600000)
+            );
+            
+            await Promise.race([conversionPromise, timeoutPromise]);
+        } catch (conversionError) {
+            // Clean up on conversion error
+            try {
+                if (videoName) ffmpeg.FS('unlink', videoName).catch(() => {});
+                if (outputFileName) ffmpeg.FS('unlink', outputFileName).catch(() => {});
+            } catch {}
+            
+            if (conversionError.message.includes('timeout')) {
+                throw conversionError;
+            }
+            throw new Error(`Conversion failed: ${conversionError.message}`);
+        }
+        
+        // Step 5: Read converted audio file
         updateProgress(70);
         showProgress('Reading converted audio...');
         
-        // Read the converted file
-        const audioData = ffmpeg.FS('readFile', outputFileName);
+        let audioData;
+        try {
+            audioData = ffmpeg.FS('readFile', outputFileName);
+            if (!audioData || audioData.length === 0) {
+                throw new Error('Converted audio file is empty');
+            }
+        } catch (readError) {
+            throw new Error(`Failed to read converted audio: ${readError.message}`);
+        }
         
-        // Clean up
-        ffmpeg.FS('unlink', videoName);
-        ffmpeg.FS('unlink', outputFileName);
+        // Step 6: Clean up FFmpeg files
+        try {
+            if (videoName) ffmpeg.FS('unlink', videoName).catch(() => {});
+            if (outputFileName) ffmpeg.FS('unlink', outputFileName).catch(() => {});
+        } catch (cleanupError) {
+            console.warn('Cleanup warning:', cleanupError);
+            // Non-critical, continue
+        }
         
+        // Step 7: Convert to base64
+        updateProgress(75);
+        showProgress('Preparing audio for upload...');
+        
+        let base64Audio;
+        try {
+            const audioBlob = new Blob([audioData.buffer], { type: 'audio/mpeg' });
+            const reader = new FileReader();
+            
+            base64Audio = await new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    reject(new Error('Base64 conversion timeout'));
+                }, 30000);
+                
+                reader.onload = () => {
+                    clearTimeout(timeout);
+                    try {
+                        const base64 = reader.result.split(',')[1];
+                        if (!base64) {
+                            reject(new Error('Invalid base64 conversion result'));
+                            return;
+                        }
+                        resolve(base64);
+                    } catch (parseError) {
+                        reject(new Error(`Failed to parse base64: ${parseError.message}`));
+                    }
+                };
+                reader.onerror = (error) => {
+                    clearTimeout(timeout);
+                    reject(new Error(`FileReader error: ${error.message || 'Unknown error'}`));
+                };
+                reader.readAsDataURL(audioBlob);
+            });
+        } catch (base64Error) {
+            throw new Error(`Failed to convert audio to base64: ${base64Error.message}`);
+        }
+        
+        // Step 8: Upload to Google Drive (with retry)
         updateProgress(80);
         showProgress('Uploading to Google Drive...');
         
-        // Convert to base64 for API
-        const audioBlob = new Blob([audioData.buffer], { type: 'audio/mpeg' });
-        const reader = new FileReader();
+        let response;
+        let result;
+        const maxRetries = 3;
+        let lastUploadError = null;
         
-        const base64Audio = await new Promise((resolve, reject) => {
-            reader.onload = () => {
-                const base64 = reader.result.split(',')[1]; // Remove data:audio/mpeg;base64, prefix
-                resolve(base64);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(audioBlob);
-        });
-        
-        // Upload to Vercel API
-        const response = await fetch('/api/convert-v2', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                audioBlob: base64Audio,
-                fileName: `${cleanAudioName}.mp3`
-            })
-        });
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                response = await fetch('/api/convert-v2', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        audioBlob: base64Audio,
+                        fileName: `${cleanAudioName}.mp3`
+                    }),
+                    signal: AbortSignal.timeout(120000) // 2 minute timeout
+                });
 
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.error || 'Upload failed');
+                if (!response.ok) {
+                    let errorData;
+                    try {
+                        errorData = await response.json();
+                    } catch {
+                        errorData = { error: `Server error: ${response.status} ${response.statusText}` };
+                    }
+                    
+                    if (response.status === 413) {
+                        throw new Error('File is too large for upload. Maximum size is 4.5MB on free tier.');
+                    }
+                    
+                    if (attempt < maxRetries) {
+                        console.log(`Upload attempt ${attempt} failed, retrying...`);
+                        await new Promise(resolve => setTimeout(resolve, 2000 * attempt)); // Exponential backoff
+                        continue;
+                    }
+                    
+                    throw new Error(errorData.error || `Upload failed: ${response.status} ${response.statusText}`);
+                }
+
+                try {
+                    result = await response.json();
+                } catch (parseError) {
+                    throw new Error(`Failed to parse server response: ${parseError.message}`);
+                }
+                
+                break; // Success, exit retry loop
+                
+            } catch (uploadError) {
+                lastUploadError = uploadError;
+                
+                if (uploadError.name === 'AbortError' || uploadError.name === 'TimeoutError') {
+                    throw new Error('Upload timeout. Please try again with a smaller file.');
+                }
+                
+                if (attempt === maxRetries) {
+                    throw new Error(`Upload failed after ${maxRetries} attempts: ${uploadError.message}`);
+                }
+                
+                console.log(`Upload attempt ${attempt} failed:`, uploadError.message);
+                await new Promise(resolve => setTimeout(resolve, 2000 * attempt));
+            }
         }
-
-        const result = await response.json();
         
+        // Success!
         updateProgress(100);
         showSuccess(`Audio file "${cleanAudioName}.mp3" has been successfully uploaded to Google Drive!`);
         
-        // Reset form
+        // Reset form after delay
         setTimeout(() => {
             videoInput.value = '';
             selectedFile = null;
@@ -232,8 +493,31 @@ convertBtn.addEventListener('click', async () => {
         }, 3000);
 
     } catch (error) {
-        console.error('Error:', error);
-        showError(error.message || 'An error occurred during conversion');
+        console.error('Conversion error:', error);
+        
+        // Clean up FFmpeg files on error
+        try {
+            if (ffmpeg && ffmpeg.FS) {
+                if (videoName) ffmpeg.FS('unlink', videoName).catch(() => {});
+                if (outputFileName) ffmpeg.FS('unlink', outputFileName).catch(() => {});
+            }
+        } catch (cleanupError) {
+            console.warn('Cleanup error:', cleanupError);
+        }
+        
+        // Show user-friendly error message
+        let errorMessage = error.message || 'An error occurred during conversion';
+        
+        // Make error messages more user-friendly
+        if (errorMessage.includes('timeout')) {
+            errorMessage = 'The operation took too long. Please try with a smaller video file.';
+        } else if (errorMessage.includes('too large')) {
+            errorMessage = 'File is too large. Please use a smaller video file (max 500MB for conversion, 4.5MB for upload on free tier).';
+        } else if (errorMessage.includes('network') || errorMessage.includes('fetch')) {
+            errorMessage = 'Network error. Please check your internet connection and try again.';
+        }
+        
+        showError(errorMessage);
         convertBtn.disabled = false;
     }
 });
