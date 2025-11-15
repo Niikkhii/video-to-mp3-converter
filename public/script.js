@@ -429,7 +429,15 @@ convertBtn.addEventListener('click', async () => {
                         audioBlob: base64Audio,
                         fileName: `${cleanAudioName}.mp3`
                     }),
-                    signal: AbortSignal.timeout(120000) // 2 minute timeout
+                    signal: (() => {
+                        // Create abort controller for timeout (fallback for browsers without AbortSignal.timeout)
+                        if (typeof AbortSignal.timeout === 'function') {
+                            return AbortSignal.timeout(120000);
+                        }
+                        const controller = new AbortController();
+                        setTimeout(() => controller.abort(), 120000);
+                        return controller.signal;
+                    })()
                 });
 
                 if (!response.ok) {
