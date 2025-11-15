@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { createFFmpeg, fetchFile } from '@ffmpeg/ffmpeg'
+import lamejs from 'lamejs'
 import styles from '../styles/Home.module.css'
 
 export default function Home() {
@@ -8,31 +8,6 @@ export default function Home() {
   const [progress, setProgress] = useState(0)
   const [outputName, setOutputName] = useState('')
   const [converting, setConverting] = useState(false)
-  const ffmpegRef = useRef(null)
-
-  const loadFFmpeg = async () => {
-    if (!ffmpegRef.current) {
-      // Use default FFmpeg loading (single-threaded mode when workerPath is not specified)
-      // This avoids SharedArrayBuffer requirement without needing cross-origin isolation headers
-      const ffmpeg = createFFmpeg({
-        log: true,
-        // Do NOT specify corePath, wasmPath, or workerPath
-        // This forces FFmpeg to use its default single-threaded build from CDN
-        // which doesn't require SharedArrayBuffer
-      })
-      ffmpeg.setProgress(({ ratio }) => setProgress(Math.round(ratio * 100)))
-      setStatus('Loading FFmpeg (this runs once, may take 30-60 seconds)...')
-      try {
-        await ffmpeg.load()
-        ffmpegRef.current = ffmpeg
-        setStatus('FFmpeg loaded successfully')
-      } catch (err) {
-        console.error('FFmpeg load error:', err)
-        setStatus('❌ Error loading FFmpeg core. Please refresh the page and try again.')
-        throw err
-      }
-    }
-  }
 
   const handleFile = async (e) => {
     const f = e.target.files[0]
@@ -52,53 +27,104 @@ export default function Home() {
 
     try {
       setConverting(true)
-      await loadFFmpeg()
+      setStatus('Extracting audio from video...')
+      setProgress(10)
 
-      const ffmpeg = ffmpegRef.current
+      // Create video element
+      const video = document.createElement('video')
+      video.preload = 'auto'
+      video.muted = true
+      video.playsInline = true
+      video.crossOrigin = 'anonymous'
+      
+      const videoURL = URL.createObjectURL(file)
+      video.src = videoURL
 
-      setStatus('Reading file...')
-      const inputName = 'input' + getExt(file.name)
-      const outputNameWithExt = outputName.endsWith('.mp3') ? outputName : outputName + '.mp3'
+      // Wait for video metadata
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = () => resolve()
+        video.onerror = () => reject(new Error('Failed to load video'))
+        setTimeout(() => reject(new Error('Video loading timeout')), 10000)
+      })
 
-      ffmpeg.FS('writeFile', inputName, await fetchFile(file))
+      setProgress(20)
+      setStatus('Processing audio...')
 
-      setStatus('Converting to MP3...')
-      await ffmpeg.run('-i', inputName, '-vn', '-acodec', 'libmp3lame', '-q:a', '2', 'output.mp3')
+      // Create AudioContext
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)()
+      const sampleRate = audioContext.sampleRate
 
-      setStatus('Extraction done — preparing upload')
-      const data = ffmpeg.FS('readFile', 'output.mp3')
-      const mp3Blob = new Blob([data.buffer], { type: 'audio/mpeg' })
-
-      // Clean up
-      ffmpeg.FS('unlink', inputName)
-      ffmpeg.FS('unlink', 'output.mp3')
-
-      // Send to server
-      setStatus('Uploading to Google Drive...')
-      const form = new FormData()
-      form.append('file', new File([mp3Blob], outputNameWithExt, { type: 'audio/mpeg' }))
-      form.append('filename', outputNameWithExt)
-
-      const res = await fetch('/api/upload', { method: 'POST', body: form })
-      const resJson = await res.json()
-
-      if (res.ok) {
-        setStatus(`✅ Uploaded successfully! File ID: ${resJson.id}. Link: ${resJson.link || 'N/A'}`)
-        console.log('Upload success:', resJson)
-        // Reset form
-        setTimeout(() => {
-          setFile(null)
-          setOutputName('')
-          setStatus('')
-          setProgress(0)
-        }, 5000)
-      } else {
-        setStatus('❌ Upload failed: ' + (resJson.error || JSON.stringify(resJson)))
-        console.error('Upload failed:', resJson)
+      // Use MediaRecorder to capture audio from video
+      const stream = video.captureStream ? video.captureStream() : null
+      
+      if (!stream) {
+        // Fallback: decode audio directly
+        const response = await fetch(videoURL)
+        const arrayBuffer = await response.arrayBuffer()
+        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer)
+        
+        // Convert to MP3
+        setProgress(40)
+        setStatus('Encoding to MP3...')
+        const mp3Blob = await encodeToMP3(audioBuffer, sampleRate)
+        
+        await uploadToDrive(mp3Blob, outputName)
+        return
       }
 
+      // Use MediaRecorder approach
+      const mediaRecorder = new MediaRecorder(stream, {
+        mimeType: 'audio/webm;codecs=opus'
+      })
+
+      const chunks = []
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data)
+      }
+
+      await new Promise((resolve, reject) => {
+        mediaRecorder.onstop = resolve
+        mediaRecorder.onerror = reject
+        
+        mediaRecorder.start()
+        video.play()
+        
+        video.onended = () => {
+          mediaRecorder.stop()
+          video.pause()
+        }
+        
+        // Fallback timeout
+        setTimeout(() => {
+          if (mediaRecorder.state !== 'inactive') {
+            mediaRecorder.stop()
+            video.pause()
+          }
+        }, (video.duration || 60) * 1000 + 2000)
+      })
+
+      setProgress(60)
+      setStatus('Converting to MP3...')
+
+      // Decode the recorded audio
+      const audioBlob = new Blob(chunks, { type: 'audio/webm' })
+      const audioArrayBuffer = await audioBlob.arrayBuffer()
+      const audioBuffer = await audioContext.decodeAudioData(audioArrayBuffer)
+
+      // Convert to MP3
+      setProgress(70)
+      const mp3Blob = await encodeToMP3(audioBuffer, sampleRate)
+
+      // Cleanup
+      URL.revokeObjectURL(videoURL)
+      audioContext.close()
+      stream.getTracks().forEach(track => track.stop())
+
+      // Upload
+      await uploadToDrive(mp3Blob, outputName)
+
     } catch (err) {
-      console.error(err)
+      console.error('Conversion error:', err)
       setStatus('❌ Error: ' + (err.message || err))
     } finally {
       setConverting(false)
@@ -106,9 +132,71 @@ export default function Home() {
     }
   }
 
-  function getExt(name) {
-    const idx = name.lastIndexOf('.')
-    return idx === -1 ? '' : name.slice(idx)
+  const encodeToMP3 = async (audioBuffer, sampleRate) => {
+    setProgress(75)
+    const channels = audioBuffer.numberOfChannels
+    const mp3encoder = new lamejs.Mp3Encoder(channels, sampleRate, 128) // 128kbps
+    
+    const leftChannel = audioBuffer.getChannelData(0)
+    const rightChannel = channels > 1 ? audioBuffer.getChannelData(1) : leftChannel
+    
+    const sampleBlockSize = 1152
+    const mp3Data = []
+    
+    for (let i = 0; i < leftChannel.length; i += sampleBlockSize) {
+      const leftChunk = leftChannel.subarray(i, i + sampleBlockSize)
+      const rightChunk = rightChannel.subarray(i, i + sampleBlockSize)
+      
+      // Convert Float32Array to Int16Array
+      const leftInt16 = new Int16Array(leftChunk.length)
+      const rightInt16 = new Int16Array(rightChunk.length)
+      for (let j = 0; j < leftChunk.length; j++) {
+        leftInt16[j] = Math.max(-32768, Math.min(32767, leftChunk[j] * 32768))
+        rightInt16[j] = Math.max(-32768, Math.min(32767, rightChunk[j] * 32768))
+      }
+      
+      const mp3buf = mp3encoder.encodeBuffer(leftInt16, rightInt16)
+      if (mp3buf.length > 0) {
+        mp3Data.push(mp3buf)
+      }
+      
+      setProgress(75 + Math.floor((i / leftChannel.length) * 20))
+    }
+    
+    // Flush encoder
+    const mp3buf = mp3encoder.flush()
+    if (mp3buf.length > 0) {
+      mp3Data.push(mp3buf)
+    }
+
+    return new Blob(mp3Data, { type: 'audio/mpeg' })
+  }
+
+  const uploadToDrive = async (mp3Blob, filename) => {
+    setProgress(90)
+    setStatus('Uploading to Google Drive...')
+    
+    const outputNameWithExt = filename.endsWith('.mp3') ? filename : filename + '.mp3'
+    const form = new FormData()
+    form.append('file', new File([mp3Blob], outputNameWithExt, { type: 'audio/mpeg' }))
+    form.append('filename', outputNameWithExt)
+
+    const res = await fetch('/api/upload', { method: 'POST', body: form })
+    const resJson = await res.json()
+
+    if (res.ok) {
+      setStatus(`✅ Uploaded successfully! File ID: ${resJson.id}. Link: ${resJson.link || 'N/A'}`)
+      console.log('Upload success:', resJson)
+      setTimeout(() => {
+        setFile(null)
+        setOutputName('')
+        setStatus('')
+        setProgress(0)
+      }, 5000)
+    } else {
+      setStatus('❌ Upload failed: ' + (resJson.error || JSON.stringify(resJson)))
+      console.error('Upload failed:', resJson)
+    }
   }
 
   return (
@@ -177,11 +265,10 @@ export default function Home() {
 
         <div className={styles.notes}>
           <small>
-            <strong>Note:</strong> ffmpeg.wasm is moderately heavy and will download WebAssembly assets to the browser (first load). Use on desktop or modern mobile.
+            <strong>Note:</strong> Uses Web Audio API + MediaRecorder - no SharedArrayBuffer required. Works in all modern browsers.
           </small>
         </div>
       </div>
     </main>
   )
 }
-

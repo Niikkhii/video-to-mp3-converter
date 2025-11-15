@@ -9,9 +9,9 @@
     "start": "next start"
   },
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.11.6",
     "formidable": "^3.5.1",
     "googleapis": "^126.0.1",
+    "lamejs": "^1.2.1",
     "next": "^13.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
