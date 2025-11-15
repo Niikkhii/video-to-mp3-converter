@@ -1,13 +1,48 @@
 import { useState, useRef } from 'react'
 import styles from '../styles/Home.module.css'
 
-// Dynamic import for lamejs to handle CommonJS module
-let lamejs = null
+// Load lamejs from CDN to avoid CommonJS bundling issues
+let lamejsModule = null
 const getLamejs = async () => {
-  if (!lamejs) {
-    lamejs = await import('lamejs')
+  if (!lamejsModule) {
+    // Try loading from CDN first (more reliable for CommonJS modules)
+    if (typeof window !== 'undefined' && !window.lamejs) {
+      return new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = 'https://cdn.jsdelivr.net/npm/lamejs@1.2.1/src/js/index.js'
+        script.onload = () => {
+          // lamejs should be available globally
+          if (window.lamejs || window.Lame) {
+            lamejsModule = window.lamejs || window.Lame
+            resolve(lamejsModule)
+          } else {
+            // Fallback to npm import
+            import('lamejs').then(module => {
+              lamejsModule = module.default || module
+              resolve(lamejsModule)
+            }).catch(reject)
+          }
+        }
+        script.onerror = () => {
+          // Fallback to npm import if CDN fails
+          import('lamejs').then(module => {
+            lamejsModule = module.default || module
+            resolve(lamejsModule)
+          }).catch(reject)
+        }
+        document.head.appendChild(script)
+      })
+    } else if (typeof window !== 'undefined' && window.lamejs) {
+      lamejsModule = window.lamejs
+      return lamejsModule
+    } else {
+      // Server-side or fallback
+      const module = await import('lamejs')
+      lamejsModule = module.default || module
+      return lamejsModule
+    }
   }
-  return lamejs.default || lamejs
+  return lamejsModule
 }
 
 export default function Home() {
